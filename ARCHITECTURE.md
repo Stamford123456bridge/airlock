@@ -473,7 +473,7 @@ Applies to role `tooling-config`. Runs on raw text, no masking.
 2. Capability rules the engine runs: `cfg-dynamic-code`, `cfg-network`, `cfg-chain-endpoint`.
 3. `cfg-process-spawn`, in this detector, two tiers off one pattern: WARN for a build step stated up front, HIGH when the command names a downloader, a decoder or an inline script.
 4. Combination rule `cfg-network-exec`: network capability and (process spawn, dynamic code or `require()` of a non-literal) in one file is HIGH even when each alone would be WARN.
-5. `cfg-appended-tail`: take the last non-empty line; flag if its length exceeds `tail_max_len` or if the entropy of its trailing window exceeds `tail_entropy`. Thresholds are placeholders until tuned on the corpus. [Unverified]
+5. `cfg-appended-tail`: take the last non-empty line and join the lines before it that are single whitespace-free tokens, walking backwards until the window reaches `tail_max_len`; flag if the final line's length exceeds `tail_max_len` or if the entropy of the trailing window exceeds `tail_entropy`. The window is what makes a payload split over the last two lines measurable, and the token restriction is what keeps an ordinary two-line config from reading as opaque. Thresholds are placeholders until tuned on the corpus. [Unverified]
 6. `cfg-nul`, reported by the collector for every role, so an unexpected role cannot hide it.
 
 Capability rules were chosen because obfuscator fingerprints rotate while the mechanism (fetch remote content, decrypt, evaluate) stays. [Verified: OpenSourceMalware reporting] Known limit: string concatenation such as `globalThis['ev'+'al']` evades regex. The long-line and tail rules give partial coverage; parser analysis is Later.
@@ -601,9 +601,14 @@ the same bound.
 Ported since, as task 3.6's second slice, in its own rule file and its own detector, because three of
 the shapes need two conditions at once: see 9.7.
 
-Not yet ported from the list above: credential harvesting, blockchain C2 shapes, `build.rs` network
-and the native-binary rules. The last two belong with the Cargo work in 6.4; credential harvesting
-and blockchain C2 have no rule, fixture or decision behind them yet, and are not guessed at here.
+`pat-jwt` is the narrow slice of credential harvesting (task 9.86): the three-segment base64url
+envelope, anchored on the `eyJ` header prefix, with no decoder and no network. Decoding claims is
+out of scope, so the rule decides whether a token is committed and not what it grants.
+
+Not yet ported from the list above: the rest of credential harvesting, blockchain C2 shapes,
+`build.rs` network and the native-binary rules. The last two belong with the Cargo work in 6.4;
+the remaining credential-harvesting shapes and blockchain C2 have no rule, fixture or decision
+behind them yet, and are not guessed at here.
 
 ### 9.7 `ci_surface`
 
@@ -622,16 +627,22 @@ word on the line:
 
 1. `pat-secret-dump` (HIGH): `${{ secrets.* }}` on a line that also names a command able to display
    it (`echo`, `printf`, `print`, `cat`, `tee`, `xxd`, `base64`, `Write-Output`, `Add-Content`,
-   `Out-File`), with `::add-mask::` carved out because that one echo is hygiene. A secret handed to a
-   step through `env:` or `with:` is the negative fixture rather than a finding; that is how a
+   `Out-File`), with `::add-mask::` carved out because that one echo is hygiene. The carve-out is
+   per command: one line is split at `;`, `&&`, `||` and `|`, the masked command is dropped and the
+   rest is judged, so masking one credential does not excuse a second one beside it. A secret handed
+   to a step through `env:` or `with:` is the negative fixture rather than a finding; that is how a
    workflow uses a credential, and reporting it would bury the shape under noise.
 2. `pat-ptr-head-checkout` (HIGH): the privileged trigger, a head ref
    (`github.event.pull_request.head`, `refs/pull/N/head`, `refs/pull/N/merge`) and an
    `actions/checkout` step in one file. Three conditions, because every pair of them has an innocent
    reading: `pull_request` with a head checkout is reviewed code in a read-only context, and
-   `pull_request_target` that leaves the default base ref is the safe form. The trigger half is read
-   out of `pat-privileged-trigger`'s own pattern, so the WARN and the HIGH cannot drift apart on what
-   a privileged trigger is.
+   `pull_request_target` that leaves the default base ref is the safe form. A run block that fetches
+   `pull/<number>/head` (or `+refs/pull/...`) and then checks out what it fetched is the same
+   pairing, with the finding on the fetch line: the trigger, a head ref and a checkout of the
+   contributor's tree are still all present, just without an `actions/checkout` step. A fetch the
+   file never checks out is not the pairing. The trigger half is read out of
+   `pat-privileged-trigger`'s own pattern, so the WARN and the HIGH cannot drift apart on what a
+   privileged trigger is.
 3. `pat-lifecycle-exec` (HIGH): a line that both fetches and hands the result to a shell or
    interpreter, which covers `curl ... | bash`, `... && python`, `| Invoke-Expression`,
    `bash <(curl ...)` and an `eval` of a fetched string. The fetch half comes from
