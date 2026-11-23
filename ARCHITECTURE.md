@@ -165,6 +165,8 @@ mode push:
       of HEAD (git merge-base --is-ancestor): finding history-rewritten (HIGH), bootstrap defaults
 mode full (local, manual, scheduled):
     read from the working tree, emit untrusted-policy-source (INFO) so the weaker guarantee is visible
+    CLI checks both config paths against the resolved repository root before any read;
+    a symlink outside the root is a usage error (exit 2), while an internal link is allowed
 
 for each policy file:
     use the version at base; if the head version differs, emit policy-changed (WARN) with a diff summary
@@ -576,6 +578,11 @@ Residuals, stated rather than hidden:
   security tool's documentation. A loader named `README.md` therefore keeps its invisible characters
   and its endpoints from these rules; it also keeps an extension nothing executes, and
   `cfg-long-line` and `nul-in-text` still read the role.
+- U+200D and U+200C are not in the invisible-character class. Both are spelling, not concealment:
+  a joiner builds emoji sequences and several writing systems, and a non-joiner is ordinary
+  orthography in Persian, Arabic, Urdu and Hindi. A localized string in a `.ts` file was a HIGH
+  finding and could fail a `fail_on = "high"` scan until U+200C left the class (issue #32). U+200B
+  and the bidi overrides remain HIGH, and `tests/unit/test_rule_unicode_locale.py` holds both halves.
 - The severity tiers are a false-positive budget (risk R-2), not a ranking of harm. The two HIGHs are
   shapes with no innocent reading in a file that is code; a tool fingerprint and a single endpoint
   mention are WARN because each has a common legitimate form (a committed obfuscated bundle, a
